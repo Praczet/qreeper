@@ -1,3 +1,10 @@
+-- main.lua
+-- Qreeper plugin entry point. Blightmud runs this on plugin load and on every reload.
+--
+-- Responsibilities: tear down the previous instance, refresh Qreeper's own modules, open the
+-- world database, and register every alias and trigger through one Lifecycle so the next
+-- reload can remove them again.
+
 local home = assert(os.getenv("HOME"))
 
 local plugin_dir = home .. "/.local/share/blightmud/plugins/qreeper"
@@ -13,17 +20,28 @@ end
 
 _G.Qreeper = nil
 
--- Refresh our Lua modules when developing.
--- Do not clear third-party modules such as lsqlite3.
+-- Qreeper's own top-level modules. Anything under aliases/, triggers/ and map/ is matched
+-- by prefix below. Third-party modules such as lsqlite3 are deliberately left loaded.
+local OWNED_MODULES = {
+	lifecycle = true,
+	memory = true,
+	observer = true,
+	tracker = true,
+	whisper = true,
+	aliases = true,
+	triggers = true,
+	map = true,
+}
+
+---True when `name` is a module that belongs to this plugin and should be reloaded.
+---@param name string
+---@return boolean
+local function is_owned_module(name)
+	return OWNED_MODULES[name] or name:match("^aliases%.") or name:match("^triggers%.") or name:match("^map%.")
+end
+
 for name in pairs(package.loaded) do
-	if
-		name == "memory"
-		or name == "lifecycle"
-		or name == "aliases"
-		or name:match("^aliases%.")
-		or name == "triggers"
-		or name:match("^triggers%.")
-	then
+	if is_owned_module(name) then
 		package.loaded[name] = nil
 	end
 end
@@ -32,10 +50,16 @@ local Lifecycle = require("lifecycle")
 local Memory = require("memory")
 local Aliases = require("aliases")
 local RoomTriggers = require("triggers.room")
+local MovementTriggers = require("triggers.movement")
 local Whisper = require("whisper")
 local Tracker = require("tracker")
-local tracker = Tracker.new()
 local MovementAliases = require("aliases.movement")
+local LocationAliases = require("aliases.location")
+local NoteAliases = require("aliases.notes")
+local MapAliases = require("aliases.map")
+local RoomsAliases = require("aliases.rooms")
+
+local tracker = Tracker.new()
 
 Whisper.init()
 
@@ -52,14 +76,14 @@ local ok, err = pcall(function()
 
 	memory:initialize()
 
-	Aliases.register(qreeper, memory)
+	Aliases.register(qreeper)
 	RoomTriggers.register(qreeper, memory, tracker)
+	MovementTriggers.register(qreeper, tracker)
 	MovementAliases.register(qreeper, tracker)
-
-	-- -- Reload without restarting Blightmud.
-	-- qreeper:add_alias("^qreeper:reload$", function()
-	-- 	dofile(plugin_dir .. "/main.lua")
-	-- end)
+	LocationAliases.register(qreeper, memory, tracker)
+	NoteAliases.register(qreeper, memory, tracker)
+	MapAliases.register(qreeper, memory, tracker)
+	RoomsAliases.register(qreeper, memory)
 end)
 
 if not ok then

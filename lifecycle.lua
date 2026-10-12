@@ -1,6 +1,11 @@
+-- lifecycle.lua
+-- Owns everything one Qreeper instance registers, so a reload can undo it completely.
+-- Always register aliases/triggers through these methods, never with alias.add/trigger.add directly.
+
 local Lifecycle = {}
 Lifecycle.__index = Lifecycle
 
+---Create an empty lifecycle with no registrations and no database.
 function Lifecycle.new()
 	return setmetatable({
 		aliases = {},
@@ -9,6 +14,9 @@ function Lifecycle.new()
 	}, Lifecycle)
 end
 
+---Register an alias and remember its id for cleanup.
+---@param pattern string Blightmud alias regex.
+---@param callback function
 function Lifecycle:add_alias(pattern, callback)
 	local item = alias.add(pattern, callback)
 
@@ -18,6 +26,10 @@ function Lifecycle:add_alias(pattern, callback)
 	return item
 end
 
+---Register a trigger and remember its id for cleanup.
+---@param pattern string|userdata Blightmud regex string or `regex.new` object.
+---@param options table Trigger options (gag, prompt, ...).
+---@param callback function
 function Lifecycle:add_trigger(pattern, options, callback)
 	local item = trigger.add(pattern, options, callback)
 
@@ -27,6 +39,7 @@ function Lifecycle:add_trigger(pattern, options, callback)
 	return item
 end
 
+---Remove every owned trigger and alias, newest first, and close the database.
 function Lifecycle:cleanup()
 	-- Remove triggers
 	for i = #self.triggers, 1, -1 do
