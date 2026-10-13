@@ -3,7 +3,7 @@
 --
 -- Responsibilities: tear down the previous instance, refresh Qreeper's own modules, open the
 -- world database, and register every alias and trigger through one Lifecycle so the next
--- reload can remove them again.
+-- reload can remove them again. Also starts the QREEP snapshot publisher and its heartbeat.
 
 local home = assert(os.getenv("HOME"))
 
@@ -20,7 +20,7 @@ end
 
 _G.Qreeper = nil
 
--- Qreeper's own top-level modules. Anything under aliases/, triggers/ and map/ is matched
+-- Qreeper's own top-level modules. Anything under aliases/, triggers/, map/ and publisher/ is matched
 -- by prefix below. Third-party modules such as lsqlite3 are deliberately left loaded.
 local OWNED_MODULES = {
 	lifecycle = true,
@@ -31,6 +31,10 @@ local OWNED_MODULES = {
 	aliases = true,
 	triggers = true,
 	map = true,
+	publisher = true,
+	navigator = true,
+	journey = true,
+	identity = true,
 }
 
 ---True when `name` is a module that belongs to this plugin and should be reloaded.
@@ -38,6 +42,7 @@ local OWNED_MODULES = {
 ---@return boolean
 local function is_owned_module(name)
 	return OWNED_MODULES[name] or name:match("^aliases%.") or name:match("^triggers%.") or name:match("^map%.")
+		or name:match("^publisher%.")
 end
 
 for name in pairs(package.loaded) do
@@ -58,6 +63,9 @@ local LocationAliases = require("aliases.location")
 local NoteAliases = require("aliases.notes")
 local MapAliases = require("aliases.map")
 local RoomsAliases = require("aliases.rooms")
+local Publisher = require("publisher")
+local Journey = require("journey")
+local JourneyAliases = require("aliases.journey")
 
 local tracker = Tracker.new()
 
@@ -76,14 +84,26 @@ local ok, err = pcall(function()
 
 	memory:initialize()
 
+	local publisher = Publisher.new(memory, tracker)
+	qreeper.publisher = publisher
+
+	local journey = Journey.new(memory, tracker)
+
 	Aliases.register(qreeper)
-	RoomTriggers.register(qreeper, memory, tracker)
+	RoomTriggers.register(qreeper, memory, tracker, publisher, journey)
 	MovementTriggers.register(qreeper, tracker)
 	MovementAliases.register(qreeper, tracker)
-	LocationAliases.register(qreeper, memory, tracker)
-	NoteAliases.register(qreeper, memory, tracker)
-	MapAliases.register(qreeper, memory, tracker)
+	LocationAliases.register(qreeper, memory, tracker, publisher)
+	NoteAliases.register(qreeper, memory, tracker, publisher)
+	MapAliases.register(qreeper, memory, tracker, publisher)
 	RoomsAliases.register(qreeper, memory)
+	JourneyAliases.register(qreeper, journey)
+
+	-- Publish once on load (position unknown until the next room), then keep it fresh.
+	publisher:publish()
+	qreeper:add_timer(Publisher.HEARTBEAT_SECONDS, function()
+		publisher:publish()
+	end)
 end)
 
 if not ok then

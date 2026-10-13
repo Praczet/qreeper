@@ -51,7 +51,8 @@ end
 ---@param qreeper table Lifecycle instance that owns the aliases.
 ---@param memory table
 ---@param tracker table
-function NoteAliases.register(qreeper, memory, tracker)
+---@param publisher table Snapshot publisher; notes appear on the QREEP map.
+function NoteAliases.register(qreeper, memory, tracker, publisher)
 	-- Add a note.
 	qreeper:add_alias("^qreeper:note\\s+(.+)$", function(matches)
 		local room_id = current_room(tracker)
@@ -73,6 +74,7 @@ function NoteAliases.register(qreeper, memory, tracker)
 			return
 		end
 
+		publisher:publish()
 		Whisper.say("Entry " .. id .. ". Preserved for posterity. Or until you change your mind.")
 	end)
 
@@ -101,8 +103,8 @@ function NoteAliases.register(qreeper, memory, tracker)
 				table.insert(location, room.realm)
 			end
 
-			if room.area then
-				table.insert(location, room.area)
+			if room.map_name then
+				table.insert(location, room.map_name)
 			end
 
 			local suffix = ""
@@ -153,6 +155,7 @@ function NoteAliases.register(qreeper, memory, tracker)
 		end
 
 		if deleted then
+			publisher:publish()
 			Whisper.say("Entry " .. note_id .. " has vanished. I shall deny it ever existed.")
 		else
 			Whisper.say("No such entry belongs to this place.")

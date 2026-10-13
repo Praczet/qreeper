@@ -26,6 +26,17 @@ local function tracker_in(room_id, exits)
 end
 
 do
+	-- The exits listener sees every observation's advertised exits.
+	local tracker = Tracker.new()
+	local seen
+	tracker:on_exits(function(exits)
+		seen = table.concat(exits, ",")
+	end)
+	tracker:observe_room(1, { "west", "stables" })
+	expect("exits listener is called", seen, "west,stables")
+end
+
+do
 	-- Rapid "n" then "e": each arrival takes its own intent, in order.
 	local tracker = tracker_in(1, { "north" })
 	tracker:attempt_move("n")
@@ -115,6 +126,19 @@ do
 	tracker:lose_position()
 	expect("lost position has no room", tracker.current_room, nil)
 	expect("lost position has no intents", tracker:describe_intents(), "none")
+end
+
+do
+	-- The way in is remembered for qreeper:map-type, and a look does not erase it.
+	local tracker = Tracker.new()
+	tracker:observe_room(1, { "north" })
+	tracker:attempt_move("n")
+	tracker:observe_room(2, { "south" })
+	tracker:expect_look()
+	tracker:observe_room(2, { "south" })
+
+	expect("previous room survives a look", tracker.previous_room, 1)
+	expect("arrival direction survives a look", tracker.arrived_by, "north")
 end
 
 if failures > 0 then

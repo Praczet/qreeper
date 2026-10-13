@@ -34,10 +34,23 @@ os.remove(path)
 do
 	local memory = Memory.new(path)
 	memory:initialize()
-	expect("fresh database migrates to v1", memory:schema_version(), 1)
+	expect("fresh database migrates to latest", memory:schema_version(), Memory.SCHEMA_VERSION)
 
 	memory:initialize()
-	expect("initialize is rerunnable", memory:schema_version(), 1)
+	expect("initialize is rerunnable", memory:schema_version(), Memory.SCHEMA_VERSION)
+
+	local columns = {}
+	for row in memory.db:nrows("PRAGMA table_info(rooms)") do
+		columns[row.name] = true
+	end
+	expect("rooms.area is gone", columns.area, nil)
+	expect("rooms.realm is gone", columns.realm, nil)
+	expect("rooms.map_id exists", columns.map_id, true)
+	expect("default map types", table.concat(memory:get_map_types(), ","), "building,cave,outdoor")
+	expect("adding a type", memory:add_map_type("Sewer"), true)
+	expect("types are case-insensitive", memory:add_map_type("SEWER"), false)
+	expect("find normalises case", memory:find_map_type("Sewer"), "sewer")
+	expect("unknown type", memory:find_map_type("castle"), nil)
 
 	local room = {
 		name = "Newbie Tower: Forest",
@@ -65,6 +78,22 @@ do
 	expect("unknown exit can be connected", memory:connect_rooms(id, "north", other), true)
 	expect("same destination confirms", memory:connect_rooms(id, "north", other), true)
 	expect("different destination is refused", memory:connect_rooms(id, "north", id), false)
+
+	-- expected_cell: compass offset from a placed room, nil for unplaced or named exits.
+	memory.db:exec("UPDATE rooms SET x = 4, y = 2, z = 0 WHERE id = " .. id)
+	local cell = memory:expected_cell(id, "east")
+	expect("expected cell east", cell and (cell.x .. "," .. cell.y .. "," .. cell.z), "5,2,0")
+	expect("no expected cell for named exits", memory:expected_cell(id, "cave"), nil)
+	expect("no expected cell when unplaced", memory:expected_cell(other, "east"), nil)
+	memory.db:exec("UPDATE rooms SET x = NULL, y = NULL, z = NULL WHERE id = " .. id)
+
+	local where = memory:get_room(id)
+	expect("get_room name", where.name, "Newbie Tower: Forest")
+	expect("get_room has no map yet", where.map_id, nil)
+	expect("get_room lists exits", #where.exits, 2)
+	expect("get_room exits are sorted", where.exits[2].direction, "north")
+	expect("get_room exit destination", where.exits[2].to, other)
+	expect("get_room unknown room", memory:get_room(9999), nil)
 
 	local ok = pcall(function()
 		memory:transaction(function()
@@ -101,7 +130,7 @@ if arg[1] then
 	local before = scalar(memory, "SELECT COUNT(*) FROM rooms") .. "/" .. scalar(memory, "SELECT COUNT(*) FROM exits")
 	memory:initialize()
 	local after = scalar(memory, "SELECT COUNT(*) FROM rooms") .. "/" .. scalar(memory, "SELECT COUNT(*) FROM exits")
-	expect("existing copy reaches v1", memory:schema_version(), 1)
+	expect("existing copy reaches latest", memory:schema_version(), Memory.SCHEMA_VERSION)
 	expect("existing copy keeps rooms/exits", after, before)
 	memory:close()
 end

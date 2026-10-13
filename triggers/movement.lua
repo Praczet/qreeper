@@ -15,6 +15,9 @@ local FAILURE_PATTERNS = {
 	"^\\s*there is no (exit|way) (in that direction|that way)",
 	"^\\s*you (can't|cannot) (go|move) in that direction",
 	"^\\s*(the|a) .+ (is|are) closed\\.?\\s*$",
+	-- 3Scapes, Public Toilets: "A locked door blocks your passage to the east. You must
+	-- insert the appropriate amount of coins to unlock it." (only the first line is matched)
+	"^\\s*(a|an|the) .+ blocks? your (passage|way)",
 }
 
 ---Register one trigger per failure pattern; each drops the oldest pending move.

@@ -70,7 +70,13 @@ function Tracker.new()
 		current_room = nil,
 		-- Set of directions advertised by the current room's header, or nil when unknown.
 		current_exits = nil,
+		-- The room before the current one and the move that explained the arrival (nil for
+		-- unexplained arrivals). `qreeper:map-type` splits a map at that exit.
+		previous_room = nil,
+		arrived_by = nil,
 		intents = {},
+		-- Called with the advertised exit list after every room observation (see on_exits).
+		exits_listener = nil,
 	}, Tracker)
 end
 
@@ -115,6 +121,8 @@ end
 function Tracker:lose_position()
 	self.current_room = nil
 	self.current_exits = nil
+	self.previous_room = nil
+	self.arrived_by = nil
 	self.intents = {}
 end
 
@@ -150,6 +158,30 @@ function Tracker:take_intent()
 	return nil
 end
 
+---The move that would explain an arrival right now, without consuming anything.
+---Mirrors take_intent's rules (expiry, unadvertised compass moves) so memory.lua can use
+---the recorded destination of that exit as identity evidence before the arrival is booked.
+---@return string|nil direction
+function Tracker:peek_direction()
+	local now = os.time()
+
+	for _, intent in ipairs(self.intents) do
+		if now - intent.at <= INTENT_TTL_SECONDS then
+			if intent.kind ~= "move" then
+				return nil
+			end
+
+			local unadvertised = COMPASS[intent.direction] and self.current_exits and not self.current_exits[intent.direction]
+
+			if not unadvertised then
+				return intent.direction
+			end
+		end
+	end
+
+	return nil
+end
+
 ---Record a confirmed room observation and describe how we got there.
 ---@param room_id integer
 ---@param exits string[] Directions advertised by the observed room's header.
@@ -169,10 +201,27 @@ function Tracker:observe_room(room_id, exits)
 		advertised[direction] = true
 	end
 
+	-- A look (same room, no move) keeps the arrival that brought us here.
+	if movement.direction or movement.from ~= room_id then
+		self.previous_room = movement.from
+		self.arrived_by = movement.direction
+	end
+
 	self.current_room = room_id
 	self.current_exits = advertised
 
+	if self.exits_listener then
+		self.exits_listener(exits or {})
+	end
+
 	return movement
+end
+
+---Call `callback(exits)` with the advertised exits each time a room is observed. One listener;
+---a later call replaces it.
+---@param callback fun(exits: string[])|nil
+function Tracker:on_exits(callback)
+	self.exits_listener = callback
 end
 
 ---Short human-readable description of the pending queue, oldest first.

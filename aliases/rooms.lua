@@ -1,6 +1,7 @@
 -- aliases/rooms.lua
--- Room catalogue: `qreeper:rooms`, `qreeper:rooms realm|area|level`, and
--- `qreeper:rooms realm|area|level VALUE` to filter. Output goes to scrollback.
+-- Room catalogue: `qreeper:rooms`, `qreeper:rooms realm|map|level`, and
+-- `qreeper:rooms realm|map|level VALUE` to filter. Output goes to scrollback.
+-- Realm and map come from the room's map (see aliases/location.lua).
 
 local Whisper = require("whisper")
 
@@ -12,7 +13,7 @@ local RESET = "\27[0m"
 
 local FIELDS = {
 	realm = true,
-	area = true,
+	map = true,
 	level = true,
 }
 
@@ -159,14 +160,14 @@ function RoomsAliases.register(qreeper, memory)
 		list_rooms(memory)
 	end)
 
-	qreeper:add_alias("^qreeper:rooms\\s+(realm|area|level)$", function(matches)
+	qreeper:add_alias("^qreeper:rooms\\s+(realm|map|level)$", function(matches)
 		local field = matches[2]
 		if FIELDS[field] then
 			list_rooms(memory, field)
 		end
 	end)
 
-	qreeper:add_alias("^qreeper:rooms\\s+(realm|area|level)\\s+(.+)$", function(matches)
+	qreeper:add_alias("^qreeper:rooms\\s+(realm|map|level)\\s+(.+)$", function(matches)
 		local field = matches[2]
 		if FIELDS[field] then
 			list_rooms(memory, field, matches[3])

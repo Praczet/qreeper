@@ -2,6 +2,16 @@
 -- `qreeper:map`: draws the current level of the current room's spatial component in
 -- scrollback, followed by conflicts, unexplored exits and latest notes.
 -- The drawing is a view computed on demand (map/layout.lua); nothing is stored.
+--
+-- `qreeper:relayout`: forgets the stored QREEP map positions and republishes, so the
+-- current area is laid out again. Use after repairing exits or when the layout looks daft.
+--
+-- `qreeper:check`: lists room pairs that record the same direction both ways (merged
+-- lookalikes) with the forget-room fix.
+--
+-- `qreeper:forget-room N`: deletes a misidentified room (two places merged into one) and
+-- its outgoing exits, so walking the area again records them separately. Refuses rooms
+-- with notes.
 
 local Whisper = require("whisper")
 local Layout = require("map.layout")
@@ -15,7 +25,90 @@ local MapAliases = {}
 ---@param qreeper table Lifecycle instance that owns the alias.
 ---@param memory table
 ---@param tracker table
-function MapAliases.register(qreeper, memory, tracker)
+---@param publisher table Snapshot publisher, for `qreeper:relayout`.
+function MapAliases.register(qreeper, memory, tracker, publisher)
+	qreeper:add_alias("^qreeper:forget-room\\s+#?(\\d+)$", function(matches)
+		local id = tonumber(matches[2])
+		local ok, deleted, reason, count = pcall(function()
+			return memory:forget_room(id)
+		end)
+
+		if not ok then
+			Whisper.say("Forgetting #" .. tostring(id) .. " went wrong. Your memory is intact, sadly.")
+			blight.output("Qreeper forget-room error: " .. tostring(deleted))
+			return
+		end
+
+		if not deleted and reason == "missing" then
+			Whisper.say("There is no #" .. id .. " to forget. Easiest request yet.")
+			return
+		end
+
+		if not deleted and reason == "notes" then
+			Whisper.say("#" .. id .. " has " .. count .. " note(s). Forget those first with qreeper:forget-note, if you mean it.")
+			return
+		end
+
+		if tracker.current_room == id then
+			tracker:lose_position()
+		end
+
+		publisher:publish()
+		Whisper.say("#" .. id .. " is forgotten. Walk there again and I'll tell the twins apart this time.")
+	end)
+
+	qreeper:add_alias("^qreeper:check$", function()
+		local ok, found = pcall(function()
+			return memory:find_suspicious_pairs()
+		end)
+
+		if not ok then
+			Whisper.say("My self-examination was interrupted.")
+			blight.output("Qreeper check error: " .. tostring(found))
+			return
+		end
+
+		if #found == 0 then
+			Whisper.say("No rooms contradict themselves. Today.")
+			return
+		end
+
+		blight.output("Qreeper check — rooms that record the same direction both ways (likely merged lookalikes):")
+
+		local ids = {}
+		local seen = {}
+
+		for _, pair in ipairs(found) do
+			blight.output(string.format("  #%d %s  <%s>  #%d %s", pair.a, pair.a_name, pair.direction, pair.b, pair.b_name))
+
+			for _, id in ipairs({ pair.a, pair.b }) do
+				if not seen[id] then
+					seen[id] = true
+					table.insert(ids, id)
+				end
+			end
+		end
+
+		table.sort(ids)
+		blight.output("  Fix: qreeper:forget-room N for each of: " .. table.concat(ids, ", ") .. " — then walk those streets again.")
+		Whisper.say(#found .. " suspicious connection(s). Details in scrollback.")
+	end)
+
+	qreeper:add_alias("^qreeper:relayout$", function()
+		local ok, cleared = pcall(function()
+			return memory:clear_positions()
+		end)
+
+		if not ok then
+			Whisper.say("The old map refuses to be forgotten.")
+			blight.output("Qreeper relayout error: " .. tostring(cleared))
+			return
+		end
+
+		publisher:publish()
+		Whisper.say("Forgot " .. cleared .. " positions. Other areas return when you visit them.")
+	end)
+
 	qreeper:add_alias("^qreeper:map$", function()
 		local current_id = tracker.current_room
 

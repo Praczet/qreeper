@@ -34,12 +34,54 @@ local look_commands = {
 	"look around",
 }
 
--- Named exits seen in 3Scapes so far. Add more when they show up.
+-- Named exits that are always tracked. Any other named exit the current room advertises
+-- (`stables`, `gate`, ...) is tracked too, through a per-room alias (room_exit_pattern).
+-- Each one is matched exactly (`^jump$`), so `jump down` passes through untracked.
 local named_exits = {
 	"enter",
 	"out",
 	"tutorial",
+	"jump",
+	"omp", -- enters a building
+	"gswap",
+	"wishroom",
+	"exit",
+	"gate", -- Woodland Road, out of Foundation into the forest
 }
+
+-- Words the fixed aliases above already handle.
+local fixed = {}
+
+for _, list in ipairs({ directions, named_exits }) do
+	for _, command in ipairs(list) do
+		fixed[command] = true
+	end
+end
+
+---Alias pattern for the advertised exits that no fixed alias covers, or nil when none.
+---Compass exits and up/down are always fixed; punctuation is escaped.
+---@param exits string[] Advertised exits of the current room.
+---@return string|nil
+function MovementAliases.room_exit_pattern(exits)
+	local words = {}
+	local seen = {}
+
+	for _, exit in ipairs(exits) do
+		local word = exit:lower()
+
+		if word ~= "" and not fixed[word] and not seen[word] then
+			seen[word] = true
+			table.insert(words, (word:gsub("%p", "\\%0")))
+		end
+	end
+
+	if #words == 0 then
+		return nil
+	end
+
+	table.sort(words)
+	return "^(" .. table.concat(words, "|") .. ")$"
+end
 
 ---Register movement, look and queue-inspection aliases.
 ---@param qreeper table Lifecycle instance that owns the aliases.
@@ -62,6 +104,32 @@ function MovementAliases.register(qreeper, tracker)
 			mud.send(exit_command)
 		end)
 	end
+
+	-- Named exits of the room we stand in, re-registered on every room observation.
+	local room_alias, room_pattern
+
+	tracker:on_exits(function(exits)
+		local pattern = MovementAliases.room_exit_pattern(exits)
+
+		if pattern == room_pattern then
+			return
+		end
+
+		if room_alias then
+			qreeper:remove_alias(room_alias)
+			room_alias = nil
+		end
+
+		room_pattern = pattern
+
+		if pattern then
+			room_alias = qreeper:add_alias(pattern, function(matches)
+				local command = matches[2] or matches[1]
+				tracker:attempt_move(command)
+				mud.send(command)
+			end).id
+		end
+	end)
 
 	for _, command in ipairs(look_commands) do
 		local input = command
