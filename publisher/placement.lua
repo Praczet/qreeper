@@ -110,7 +110,7 @@ local function build_adjacency(graph, mutual_only)
 	local blocked = boundaries(graph)
 
 	for _, exit in ipairs(graph.exits) do
-		if exit.to then
+		if exit.to and not exit.guessed then
 			recorded[exit.from .. ":" .. exit.direction] = exit.to
 		end
 	end
@@ -124,6 +124,7 @@ local function build_adjacency(graph, mutual_only)
 		local offset = OFFSETS[exit.direction]
 		local usable = offset
 			and exit.to
+			and not exit.guessed
 			and exit.from ~= exit.to
 			and graph.rooms[exit.from]
 			and graph.rooms[exit.to]

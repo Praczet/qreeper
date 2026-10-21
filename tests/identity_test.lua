@@ -189,6 +189,56 @@ do
 	expect("crowded lookalike is a twin", crowded_status, "twin")
 	local predicted = choose({ { id = 171, description = stored } }, seen, { crowded = true, predicted_id = 171 })
 	expect("crowded but predicted by the exit matches", predicted, 171)
+	local _, far_crowded = choose({ { id = 171, description = stored, far = true } }, stored, { crowded = true })
+	expect("far, crowded and identical is still a twin", far_crowded, "twin")
+	local far_predicted = choose({ { id = 171, description = stored, far = true } }, stored, { crowded = true, predicted_id = 171 })
+	expect("far and crowded but predicted by the exit matches", far_predicted, 171)
+end
+
+do
+	-- Chaos Mountains redraw a room's text on every visit: `168 cave` led to #169 both times,
+	-- the two texts scored 0.42, Orsurus the Guide stood there both times (2026-10-14).
+	local before = "The Chaos Mountains The influence of the Chaos Flux is quite apparent here.  The mountains look far too treacherous to continue.  There is nothing here but rock and more rock -- and some stone.  To the south you almost miss an opening to a set of foothills, while to the southwest you determine that the range of mountains continues."
+	local after = "The Chaos Mountains A shining, sheer rock face stands before you.  The air shifts here with no wind.  The mountains look far too treacherous to continue.  To the southeast you sort of see an opening to a set of foothills, while to the southwest you just make out that the range of mountains continues."
+	local guide = { "Orsurus the Guide." }
+	local room = { { id = 169, description = before, details = guide } }
+	expect("redrawn text scores below the threshold", Identity.similarity(before, after) < Identity.SIMILAR, true)
+	local _, waiting = choose(room, after, { crowded = true, predicted_id = 169 })
+	expect("predicted room with other text waits for details", waiting, "need-details")
+	local id = choose(room, after, { crowded = true, predicted_id = 169, details = guide })
+	expect("predicted room with a shared detail matches", id, 169)
+	local _, other = choose(room, after, { crowded = true, predicted_id = 169, details = { "A rock." } })
+	expect("predicted room without a shared detail is a twin", other, "twin")
+	local _, unpredicted = choose(room, after, { crowded = true, details = guide })
+	expect("shared detail without graph evidence is a twin", unpredicted, "twin")
+end
+
+do
+	-- `193 east` never walked; #231 already sits on the cell it lands on, text redrawn (2026-10-14).
+	local stored = "Foothills in the Chaos Mountains The terrain begins to get rockier here.  No sun is visible, yet the sky gives off a light of its own.  The rocks shimmer periodically with a light of their own."
+	local seen = "Foothills in the Chaos Mountains Sharp rocks jut out from the landscape here.  No sun is visible, yet the sky gives off a light of its own.  To the northeast you almost miss an opening to a range of mountains."
+	local room = { { id = 230, description = stored }, { id = 231, description = stored, here = true } }
+	local id, status = choose(room, seen, { crowded = true })
+	expect("lookalike on the landing cell matches", id, 231)
+	expect("lookalike on the landing cell is known", status, "known")
+	local recorded = choose(room, seen, { crowded = true, predicted_id = 230 })
+	expect("a recorded exit outranks the landing cell", recorded, nil)
+	local agreed = choose(room, seen, { crowded = true, predicted_id = 231 })
+	expect("recorded exit and landing cell agree over the text", agreed, 231)
+end
+
+do
+	-- The wrapped tail of a long "Obvious exits" line is not a detail.
+	local Observer = require("observer")
+	local observer = Observer.new()
+	observer:begin({ name = "Foothills", exits = { "east", "north", "northwest", "south", "southwest" }, fingerprint = "f" })
+	observer:summary()
+	observer:add_detail("southwest, south, northwest")
+	observer:add_detail("Orsurus the Guide.")
+	observer:add_detail("south")
+	local details = observer:snapshot().details
+	expect("exits tail is skipped", details[1], "Orsurus the Guide.")
+	expect("only the first line can be an exits tail", details[2], "south")
 end
 
 if failures > 0 then

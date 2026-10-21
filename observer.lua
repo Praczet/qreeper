@@ -96,6 +96,35 @@ local function is_noise(text)
 	return text == "" or text:match("^>") ~= nil or text:match("^[%s\\|/%-%*NSEWUD]+$") ~= nil
 end
 
+---True for the wrapped tail of a long "Obvious exits" line: nothing but the room's own exits
+---(Chaos Mountains foothills, 2026-10-14: "southwest, south, northwest" stored as a detail).
+---@param text string
+---@param exits string[]
+---@return boolean
+local function is_exits_tail(text, exits)
+	local known = {}
+
+	for _, direction in ipairs(exits or {}) do
+		known[direction] = true
+	end
+
+	local count = 0
+
+	for item in text:lower():gsub("%.$", ""):gsub("%f[%w]and%f[%W]", ","):gmatch("[^,]+") do
+		local direction = item:match("^%s*(.-)%s*$")
+
+		if direction ~= "" then
+			if not known[direction] then
+				return false
+			end
+
+			count = count + 1
+		end
+	end
+
+	return count > 0
+end
+
 ---Add one line after the summary as a detail.
 ---@param line string
 function Observer:add_detail(line)
@@ -107,9 +136,11 @@ function Observer:add_detail(line)
 
 	local text = line:match("^%s*(.-)%s*$"):sub(1, MAX_DETAIL_LENGTH)
 
-	if not is_noise(text) then
-		table.insert(room.details, text)
+	if is_noise(text) or (#room.details == 0 and is_exits_tail(text, room.exits)) then
+		return
 	end
+
+	table.insert(room.details, text)
 end
 
 ---The observation so far, without closing it.

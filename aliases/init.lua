@@ -30,6 +30,7 @@ Aliases.HELP = {
 			{ "qreeper:level N", "set the current room's level" },
 			{ "qreeper:map-merge", "undo a split, rejoin the neighbouring map" },
 			{ "qreeper:relayout", "lay out the current map again" },
+			{ "qreeper:fill-grid", "guess unwalked links between neighbouring rooms of a regular grid map" },
 		},
 	},
 	{
@@ -43,6 +44,8 @@ Aliases.HELP = {
 		"Notes",
 		{
 			{ "qreeper:note TEXT", "add a note to this room" },
+			{ "qreeper:mark-it [TEXT]", "mark this room as special on the map, optionally with a note" },
+			{ "qreeper:unmark-it", "remove the mark from this room" },
 			{ "qreeper:notes", "latest notes" },
 			{ "qreeper:notes-for-room ID", "notes of one room" },
 			{ "qreeper:notes-by-room", "rooms that have notes" },

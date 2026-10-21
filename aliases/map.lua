@@ -6,6 +6,10 @@
 -- `qreeper:relayout`: forgets the stored QREEP map positions and republishes, so the
 -- current area is laid out again. Use after repairing exits or when the layout looks daft.
 --
+-- `qreeper:fill-grid`: in a regular grid map (every walked compass exit lands on its cell),
+-- links each unexplored exit to the room on the cell it points at when that room advertises
+-- the way back. Stored as guesses; walking one confirms or corrects it.
+--
 -- `qreeper:check`: lists room pairs that record the same direction both ways (merged
 -- lookalikes) with the forget-room fix.
 --
@@ -107,6 +111,58 @@ function MapAliases.register(qreeper, memory, tracker, publisher)
 
 		publisher:publish()
 		Whisper.say("Forgot " .. cleared .. " positions. Other areas return when you visit them.")
+	end)
+
+	qreeper:add_alias("^qreeper:fill-grid$", function()
+		local current_id = tracker.current_room
+
+		if not current_id then
+			Whisper.say("Fill which grid? Look around first.")
+			return
+		end
+
+		local ok, map, filled, misfits = pcall(function()
+			local map = memory:get_room_map(current_id)
+
+			if not map then
+				return nil
+			end
+
+			return map, memory:guess_by_grid(map.id)
+		end)
+
+		if not ok then
+			Whisper.say("The grid resisted. Nothing was changed.")
+			blight.output("Qreeper fill-grid error: " .. tostring(map))
+			return
+		end
+
+		if not map then
+			Whisper.say("This room is on no map yet. Let the map catch up first.")
+			return
+		end
+
+		if not filled then
+			blight.output("Qreeper fill-grid — walked exits in " .. map.name .. " that land off their cell:")
+
+			for i, misfit in ipairs(misfits) do
+				if i > 10 then
+					blight.output("  ... " .. (#misfits - 10) .. " more")
+					break
+				end
+
+				blight.output(string.format("  #%d %s -> #%d", misfit.from, misfit.direction, misfit.to))
+			end
+
+			Whisper.say(map.name .. " is no honest grid (" .. #misfits .. " misfit(s)). I'll not guess here.")
+			return
+		end
+
+		if filled > 0 then
+			publisher:publish()
+		end
+
+		Whisper.say("Guessed " .. filled .. " link(s) in " .. map.name .. ". Walk them to make them true.")
 	end)
 
 	qreeper:add_alias("^qreeper:map$", function()

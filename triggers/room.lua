@@ -251,6 +251,11 @@ function RoomTriggers.register(qreeper, memory, tracker, publisher, journey)
 				Whisper.say("Curious. This passage disagrees with my memories.")
 				return "done"
 			end
+
+			-- Best effort: a failed guess loses nothing that walking cannot relearn.
+			pcall(function()
+				memory:guess_way_back(movement.from, movement.direction, movement.to)
+			end)
 		end
 
 		local message = describe_room(room, status, movement)

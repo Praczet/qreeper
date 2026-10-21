@@ -172,6 +172,7 @@ function Publisher:build()
 			z = placed and room.z or Json.null,
 			mapId = nullable(placed and room.map_id or nil),
 			positionStatus = placed and (room.position_status or "inferred") or "unplaced",
+			marked = room.marked == true,
 			notes = notes,
 		})
 	end
@@ -183,6 +184,7 @@ function Publisher:build()
 			from = exit.from,
 			direction = exit.direction,
 			to = nullable(exit.to),
+			guessed = exit.guessed == true,
 			boundary = nullable(exit.boundary),
 			geometry = Placement.geometry(exit, positions),
 		})

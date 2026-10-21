@@ -311,6 +311,7 @@ do
 	memory:connect_rooms(path, "south", forest)
 	memory:connect_rooms(forest, "enter", hollow)
 	memory:add_note(forest, 'Thieves "here"')
+	memory:set_marked(forest, true)
 
 	local tracker = { current_room = forest }
 	local publisher = Publisher.new(memory, tracker, map_path)
@@ -323,8 +324,10 @@ do
 
 	expect("snapshot has schemaVersion 1", text:find('"schemaVersion":1', 1, true) ~= nil, true)
 	expect("current room is published", text:find('"currentRoomId":' .. forest, 1, true) ~= nil, true)
-	expect("unexplored exit has null destination", text:find('"direction":"northwest","from":' .. forest .. ',"geometry":"unknown","to":null', 1, true) ~= nil, true)
+	expect("unexplored exit has null destination", text:find('"direction":"northwest","from":' .. forest .. ',"geometry":"unknown","guessed":false,"to":null', 1, true) ~= nil, true)
 	expect("named exit is named", text:find('"direction":"enter","from":' .. forest .. ',"geometry":"named"', 1, true) ~= nil, true)
+	expect("marked room is published", text:find('"marked":true', 1, true) ~= nil, true)
+	expect("unmarked rooms say so", text:find('"marked":false', 1, true) ~= nil, true)
 	expect("note text is escaped", text:find('Thieves \\"here\\"', 1, true) ~= nil, true)
 	expect("unvisited component is unplaced", text:find('"positionStatus":"unplaced"', 1, true) ~= nil, true)
 	expect("no temp file left behind", io.open(map_path .. ".tmp", "r"), nil)

@@ -1,6 +1,8 @@
 -- aliases/notes.lua
 -- Room notes: `qreeper:note TEXT`, `qreeper:notes`, `qreeper:notes-for-room ID`,
 -- `qreeper:notes-by-room`, `qreeper:forget-note ID`. Notes attach to room ids, never names.
+-- Marks: `qreeper:mark-it [TEXT]` marks the current room (drawn apart on the QREEP map) and
+-- adds TEXT as a note; `qreeper:unmark-it` removes the mark, the notes stay.
 
 local Whisper = require("whisper")
 
@@ -76,6 +78,60 @@ function NoteAliases.register(qreeper, memory, tracker, publisher)
 
 		publisher:publish()
 		Whisper.say("Entry " .. id .. ". Preserved for posterity. Or until you change your mind.")
+	end)
+
+	-- Mark the current room, optionally with a note. Marking twice is harmless.
+	qreeper:add_alias("^qreeper:mark-it(?:\\s+(.*))?$", function(matches)
+		local room_id = current_room(tracker)
+		if not room_id then
+			return
+		end
+
+		local content = trim(matches[2] or "")
+
+		local ok, note_id = pcall(function()
+			return memory:transaction(function()
+				memory:set_marked(room_id, true)
+
+				if content ~= "" then
+					return memory:add_note(room_id, content)
+				end
+			end)
+		end)
+
+		if not ok then
+			Whisper.say("The mark would not stick. Nothing changed.")
+			blight.output("Qreeper mark-it error: " .. tostring(note_id))
+			return
+		end
+
+		publisher:publish()
+
+		if note_id then
+			Whisper.say("#" .. room_id .. " marked, with entry " .. note_id .. ". X marks the spot, finally literally.")
+		else
+			Whisper.say("#" .. room_id .. " marked. I'll make it stand out, like you in a crowd of goblins.")
+		end
+	end)
+
+	qreeper:add_alias("^qreeper:unmark-it$", function()
+		local room_id = current_room(tracker)
+		if not room_id then
+			return
+		end
+
+		local ok, err = pcall(function()
+			memory:set_marked(room_id, false)
+		end)
+
+		if not ok then
+			Whisper.say("The mark clings on. Nothing changed.")
+			blight.output("Qreeper unmark-it error: " .. tostring(err))
+			return
+		end
+
+		publisher:publish()
+		Whisper.say("#" .. room_id .. " is ordinary again. Its notes stay.")
 	end)
 
 	qreeper:add_alias("^qreeper:notes-by-room$", function()

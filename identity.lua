@@ -3,7 +3,8 @@
 --
 -- Candidates are stored rooms with the same fingerprint (name + sorted exits). Evidence,
 -- strongest first:
---   1. Graph: the exit just taken already leads to one of the candidates.
+--   1. Graph: the exit just taken already leads to one of the candidates. Without a recorded
+--      exit, a candidate the map places exactly where the move lands.
 --   2. Description: word overlap with a candidate's stored description.
 --   3. Details: the lines after "Obvious exits" (statues, items, monsters).
 --   4. Movement: a confirmed move does not land in the room it started from - unless the
@@ -13,14 +14,17 @@
 -- Details and rule 4 are only consulted when name, exits and description cannot decide:
 -- several stored rooms are alike, or the only lookalike is the room we just left. That is
 -- the Hall of Champions case: identical halls told apart by one statue each. Ordinary rooms
--- never look at details, so a wandering monster cannot split a normal room in two.
+-- never look at details, so a wandering monster cannot split a normal room in two. One more
+-- exception: when the exit just taken leads to a candidate whose text disagrees, a shared
+-- detail line confirms it anyway (Chaos Mountains redraw their text on every visit).
 --
 -- Description threshold from the real world database (2026-10-12): distinct rooms mostly
 -- score below 0.45, revisits of a static room score 1.0.
 --
 -- Strict matching (SIMILAR_STRICT) applies to a candidate the map places far from where the
 -- move should land (`far`), and to every candidate when several stored rooms already share
--- the observed name (`crowded`) - unless the exit just taken already leads to it. The Chaos
+-- the observed name (`crowded`) - unless the exit just taken already leads to it. A
+-- candidate that is both far and crowded never matches on text alone: it becomes a twin. The Chaos
 -- Mountains and the Valley of Eras (2026-10-13) build every room from the same stock
 -- sentences: two different rooms there scored up to 0.77, a revisit of one room still ~1.0.
 
@@ -139,8 +143,9 @@ local function compatible(candidate, description, strict)
 end
 
 ---Pick the stored room for an observation.
----@param candidates table[] `{ id, description, details, far }` rooms with the observed
----fingerprint; `far` when the map puts the candidate away from where the move should land.
+---@param candidates table[] `{ id, description, details, far, here }` rooms with the observed
+---fingerprint; `far` when the map puts the candidate away from where the move should land,
+---`here` when it sits exactly on that cell.
 ---@param observation table `{ description, details, predicted_id, from_id }`:
 ---  details       nil while the post-summary lines have not arrived yet
 ---  predicted_id  destination already recorded for the exit just taken
@@ -157,12 +162,28 @@ function Identity.choose(candidates, observation)
 
 	local similar = {}
 	local from_is_similar = false
+	-- The candidate the exit just taken leads to, when its description disagrees.
+	local predicted_unlike = nil
 
 	for _, candidate in ipairs(candidates) do
 		local predicted = candidate.id == observation.predicted_id
-		local strict = not predicted and (candidate.far or observation.crowded)
 
-		if compatible(candidate, observation.description, strict) then
+		-- Position: the map already has this lookalike exactly where the move lands, and no
+		-- recorded exit says otherwise. The Chaos Mountains redraw their text on every visit, so
+		-- the text cannot confirm it (2026-10-14: `193 east` landed on #231's cell, and
+		-- `192 south`, recorded to #194 on #194's cell, still made the twins #233 and #235).
+		if candidate.here and (observation.predicted_id == nil or predicted) then
+			return candidate.id, "known"
+		end
+
+		local strict = not predicted and (candidate.far or observation.crowded)
+		-- Stock-sentence areas: a lookalike the map puts far from where the move lands, among
+		-- several rooms of the same name, is a twin even when the text matches word for word.
+		-- A duplicate can be forgotten later; a wrong merge silently rewires the graph
+		-- (Valley of Eras, 2026-10-13: `223 west` and `225 east` both landed in room 190).
+		local far_twin = not predicted and candidate.far and observation.crowded
+
+		if not far_twin and compatible(candidate, observation.description, strict) then
 			if candidate.id == observation.predicted_id then
 				return candidate.id, "known"
 			end
@@ -172,6 +193,21 @@ function Identity.choose(candidates, observation)
 			end
 
 			table.insert(similar, candidate)
+		elseif predicted then
+			predicted_unlike = candidate
+		end
+	end
+
+	-- Graph plus a shared detail line outweighs the text: the Chaos Mountains redraw a room's
+	-- description from stock sentences on every visit (2026-10-14: `168 cave` led to 169, the
+	-- text scored 0.42, Orsurus the Guide stood there both times - and a twin #233 was made).
+	if predicted_unlike and #(predicted_unlike.details or {}) > 0 then
+		if observation.details == nil then
+			return nil, "need-details"
+		end
+
+		if shares_detail(predicted_unlike.details, observation.details) then
+			return predicted_unlike.id, "known"
 		end
 	end
 

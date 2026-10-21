@@ -76,7 +76,7 @@ local function build_adjacency(graph)
 
 	for _, exit in ipairs(graph.exits) do
 		if exit.to and graph.rooms[exit.from] and graph.rooms[exit.to] and exit.from ~= exit.to then
-			add(exit.from, exit.direction, exit.to, false)
+			add(exit.from, exit.direction, exit.to, exit.guessed == true)
 
 			local back = OPPOSITE[exit.direction]
 

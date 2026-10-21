@@ -41,6 +41,8 @@ World database: `~/.local/share/blightmud/qreeper/worlds/3scapes.sqlite`. Back i
 | `qreeper:realm NAME` | Set the current map's realm (Foundation, or one of the three realms). |
 | `qreeper:map-merge` | Undo a split: the current map rejoins its neighbour across the compass door. Maps behind named exits stay separate. |
 | `qreeper:note TEXT` | Add a note to the current room. |
+| `qreeper:mark-it [TEXT]` | Mark the current room so the map draws it apart; with TEXT, also add a note. |
+| `qreeper:unmark-it` | Remove the mark from the current room. |
 | `qreeper:notes` / `qreeper:notes-for-room ID` | Show notes. |
 | `qreeper:notes-by-room` | Rooms that have notes. |
 | `qreeper:forget-note ID` | Delete a note from the current room. |

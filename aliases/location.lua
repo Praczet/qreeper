@@ -193,7 +193,7 @@ function LocationAliases.register(qreeper, memory, tracker, publisher)
 			local exits = {}
 
 			for _, exit in ipairs(room.exits) do
-				local text = exit.direction .. " " .. (exit.to and ("#" .. exit.to) or "?")
+				local text = exit.direction .. " " .. (exit.to and ("#" .. exit.to .. (exit.guessed and "?" or "")) or "?")
 
 				if exit.map_id and exit.map_id ~= room.map_id then
 					text = text .. " (" .. (exit.boundary or "into") .. " " .. exit.map_name .. ")"

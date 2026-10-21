@@ -122,6 +122,17 @@ local MIGRATIONS = {
         ALTER TABLE rooms DROP COLUMN area;
         ALTER TABLE rooms DROP COLUMN realm;
     ]],
+
+	-- A way back nobody walked yet: after `A east -> B`, B's advertised but unexplored `west`
+	-- is filled with A and marked guessed. A real walk overwrites it; identity ignores it.
+	[6] = [[
+        ALTER TABLE exits ADD COLUMN guessed INTEGER NOT NULL DEFAULT 0;
+    ]],
+
+	-- A room the player marked as worth remembering (`qreeper:mark-it`); drawn apart on the map.
+	[7] = [[
+        ALTER TABLE rooms ADD COLUMN marked INTEGER NOT NULL DEFAULT 0;
+    ]],
 }
 
 -- Latest schema version this plugin writes.
@@ -217,9 +228,23 @@ function Memory:initialize()
 	end
 end
 
----Record a directed exit `from --direction--> to`.
----Fills an unknown destination, confirms an identical one, and refuses to overwrite a
----different known destination.
+---Ways back for compass and up/down exits; named exits (`cave`, `out`) have none.
+local OPPOSITE = {
+	north = "south",
+	south = "north",
+	east = "west",
+	west = "east",
+	northeast = "southwest",
+	southwest = "northeast",
+	northwest = "southeast",
+	southeast = "northwest",
+	up = "down",
+	down = "up",
+}
+
+---Record a directed exit `from --direction--> to`, walked.
+---Fills an unknown or guessed destination, confirms an identical one, and refuses to
+---overwrite a different walked destination.
 ---@return boolean connected False when the stored exit disagrees with this observation.
 function Memory:connect_rooms(from_id, direction, to_id)
 	if not from_id or not to_id or not direction then
@@ -231,9 +256,10 @@ function Memory:connect_rooms(from_id, direction, to_id)
         VALUES (?, ?, ?)
 
         ON CONFLICT(room_id, direction)
-        DO UPDATE SET destination_id = excluded.destination_id
+        DO UPDATE SET destination_id = excluded.destination_id, guessed = 0
         WHERE exits.destination_id IS NULL
            OR exits.destination_id = excluded.destination_id
+           OR exits.guessed = 1
     ]]))
 
 	assert(stmt:bind_values(from_id, direction, to_id) == sqlite3.OK)
@@ -244,6 +270,141 @@ function Memory:connect_rooms(from_id, direction, to_id)
 	assert(result == sqlite3.DONE, self.db:errmsg())
 
 	return self.db:changes() > 0
+end
+
+---After a walked `from --direction--> to`, guess the way back: `to`'s opposite exit, when it
+---is advertised and still unexplored, leads to `from`. Never touches a known destination.
+---@return boolean guessed
+function Memory:guess_way_back(from_id, direction, to_id)
+	local back = OPPOSITE[direction]
+
+	if not back or not from_id or not to_id or from_id == to_id then
+		return false
+	end
+
+	local stmt = assert(self.db:prepare([[
+        UPDATE exits
+        SET destination_id = ?, guessed = 1
+        WHERE room_id = ? AND direction = ? AND destination_id IS NULL
+    ]]))
+
+	assert(stmt:bind_values(from_id, to_id, back) == sqlite3.OK)
+
+	local result = stmt:step()
+	stmt:finalize()
+
+	assert(result == sqlite3.DONE, self.db:errmsg())
+
+	return self.db:changes() > 0
+end
+
+---Guess the unwalked links of a regular grid map: an unexplored compass exit from A whose
+---cell (same map, same z) holds B, while B advertises the opposite exit unexplored, leads
+---to B and back. Both are marked guessed, like guess_way_back. Refuses the whole map when
+---any walked compass exit inside it lands off its cell: there the grid is no evidence.
+---@param map_id integer
+---@return integer|nil filled Pairs guessed; nil when refused.
+---@return table[] misfits `{ from, direction, to }` walked exits that contradict the grid.
+function Memory:guess_by_grid(map_id)
+	return self:transaction(function()
+		local rooms, at = {}, {}
+
+		local stmt = assert(self.db:prepare([[
+            SELECT id, x, y, z FROM rooms
+            WHERE map_id = ? AND x IS NOT NULL AND y IS NOT NULL
+        ]]))
+		assert(stmt:bind_values(map_id) == sqlite3.OK)
+
+		for row in stmt:nrows() do
+			local z = row.z or 0
+			rooms[row.id] = { x = row.x, y = row.y, z = z }
+			at[row.x .. ":" .. row.y .. ":" .. z] = row.id
+		end
+
+		stmt:finalize()
+
+		-- Every exit of the map's rooms, grouped by room and direction.
+		local exits = {}
+
+		stmt = assert(self.db:prepare([[
+            SELECT e.room_id, e.direction, e.destination_id, e.guessed, e.boundary
+            FROM exits e JOIN rooms r ON r.id = e.room_id
+            WHERE r.map_id = ?
+        ]]))
+		assert(stmt:bind_values(map_id) == sqlite3.OK)
+
+		for row in stmt:nrows() do
+			exits[row.room_id] = exits[row.room_id] or {}
+			exits[row.room_id][row.direction] = row
+		end
+
+		stmt:finalize()
+
+		local function target(id, direction)
+			local offset = Placement.OFFSETS[direction]
+			local room = rooms[id]
+
+			if not offset or offset[3] ~= 0 or not room then
+				return nil
+			end
+
+			return at[(room.x + offset[1]) .. ":" .. (room.y + offset[2]) .. ":" .. room.z]
+		end
+
+		local misfits = {}
+
+		for id, by_direction in pairs(exits) do
+			for direction, exit in pairs(by_direction) do
+				local walked = exit.destination_id and exit.guessed ~= 1 and not exit.boundary
+				local offset = Placement.OFFSETS[direction]
+
+				if walked and offset and offset[3] == 0 and rooms[exit.destination_id]
+					and target(id, direction) ~= exit.destination_id then
+					table.insert(misfits, { from = id, direction = direction, to = exit.destination_id })
+				end
+			end
+		end
+
+		if #misfits > 0 then
+			table.sort(misfits, function(a, b)
+				return a.from < b.from or (a.from == b.from and a.direction < b.direction)
+			end)
+
+			return nil, misfits
+		end
+
+		local update = assert(self.db:prepare([[
+            UPDATE exits
+            SET destination_id = ?, guessed = 1
+            WHERE room_id = ? AND direction = ? AND destination_id IS NULL
+        ]]))
+
+		local function guess(from, direction, to)
+			assert(update:bind_values(to, from, direction) == sqlite3.OK)
+			assert(update:step() == sqlite3.DONE, self.db:errmsg())
+			update:reset()
+		end
+
+		local filled = 0
+
+		for id, by_direction in pairs(exits) do
+			for direction, exit in pairs(by_direction) do
+				local other = not exit.destination_id and target(id, direction)
+				local back = other and exits[other] and exits[other][OPPOSITE[direction]]
+
+				-- Each pair is seen from both ends; take it from the lower id only.
+				if back and not back.destination_id and id < other then
+					guess(id, direction, other)
+					guess(other, OPPOSITE[direction], id)
+					filled = filled + 1
+				end
+			end
+		end
+
+		update:finalize()
+
+		return filled, misfits
+	end)
 end
 
 ---Match an observed room to a stored one, or create it. Identity rules live in identity.lua:
@@ -277,13 +438,16 @@ function Memory:remember_room(room, evidence)
 		local candidates = {}
 		for row in query:nrows() do
 			local far = false
+			local here = false
 
 			if expected and row.x and row.y and row.map_id == expected.map then
-				far = math.max(
+				local distance = math.max(
 					math.abs(row.x - expected.x),
 					math.abs(row.y - expected.y),
 					math.abs((row.z or 0) - expected.z)
-				) > 1
+				)
+				far = distance > 1
+				here = distance == 0
 			end
 
 			table.insert(candidates, {
@@ -291,6 +455,7 @@ function Memory:remember_room(room, evidence)
 				description = row.description,
 				details = split_details(row.details),
 				far = far,
+				here = here,
 			})
 		end
 		query:finalize()
@@ -636,7 +801,7 @@ end
 ---The whole room graph: rooms keyed by id, exits as a directed list (`to` may be nil).
 ---Rooms carry stored positions (`x`, `y`, `z`, `position_status`, `map_id`), all nil until
 ---placed.
----@return table `{ rooms = { [id] = room }, exits = { { from, direction, to } },
+---@return table `{ rooms = { [id] = room }, exits = { { from, direction, to, guessed } },
 ---maps = { [id] = { id, name, entrance_id } } }`
 function Memory:get_map()
 	local rooms = {}
@@ -644,7 +809,7 @@ function Memory:get_map()
 	local maps = self:get_maps()
 
 	local room_query = assert(self.db:prepare([[
-        SELECT id, name, description, level, x, y, z, position_status, map_id
+        SELECT id, name, description, level, x, y, z, position_status, map_id, marked
         FROM rooms
         ORDER BY id
     ]]))
@@ -660,13 +825,14 @@ function Memory:get_map()
 			z = row.z,
 			position_status = row.position_status,
 			map_id = row.map_id,
+			marked = row.marked == 1,
 		}
 	end
 
 	room_query:finalize()
 
 	local exit_query = assert(self.db:prepare([[
-        SELECT room_id, direction, destination_id, boundary
+        SELECT room_id, direction, destination_id, boundary, guessed
         FROM exits
         ORDER BY room_id, direction
     ]]))
@@ -677,6 +843,7 @@ function Memory:get_map()
 			direction = row.direction,
 			to = row.destination_id,
 			boundary = row.boundary,
+			guessed = row.guessed == 1,
 		})
 	end
 
@@ -687,6 +854,20 @@ function Memory:get_map()
 		exits = exits,
 		maps = maps,
 	}
+end
+
+---Mark or unmark a room (`qreeper:mark-it`).
+---@param id integer
+---@param marked boolean
+---@return boolean found False when there is no such room.
+function Memory:set_marked(id, marked)
+	local stmt = assert(self.db:prepare("UPDATE rooms SET marked = ? WHERE id = ?"))
+	assert(stmt:bind_values(marked and 1 or 0, id) == sqlite3.OK)
+	local result = stmt:step()
+	stmt:finalize()
+	assert(result == sqlite3.DONE, self.db:errmsg())
+
+	return self.db:changes() > 0
 end
 
 ---The most recent note text for each room that has notes.
@@ -713,12 +894,13 @@ function Memory:get_latest_notes()
 	return notes
 end
 
----Exits of one room as `{ [direction] = destination_id | false }`; false means unexplored.
+---Walked exits of one room as `{ [direction] = destination_id | false }`; false means
+---unexplored. A guessed way back counts as unexplored: it is no evidence of where it leads.
 ---@param room_id integer
 ---@return table<string, integer|false>
 function Memory:get_room_exits(room_id)
 	local stmt = assert(self.db:prepare([[
-        SELECT direction, destination_id
+        SELECT direction, destination_id, guessed
         FROM exits
         WHERE room_id = ?
     ]]))
@@ -728,7 +910,7 @@ function Memory:get_room_exits(room_id)
 	local exits = {}
 
 	for row in stmt:nrows() do
-		exits[row.direction] = row.destination_id or false
+		exits[row.direction] = row.guessed ~= 1 and row.destination_id or false
 	end
 
 	stmt:finalize()
@@ -739,7 +921,7 @@ end
 ---One room with its position and map, for `qreeper:where`.
 ---@param id integer
 ---@return table|nil room `{ id, name, level, x, y, z, map_id, map_name, map_type, realm,
----entrance_id, exits }`; exits are `{ direction, to, boundary, map_id, map_name }`.
+---entrance_id, exits }`; exits are `{ direction, to, guessed, boundary, map_id, map_name }`.
 function Memory:get_room(id)
 	local stmt = assert(self.db:prepare([[
         SELECT r.id, r.name, r.level, r.x, r.y, r.z, r.map_id,
@@ -776,7 +958,7 @@ function Memory:get_room(id)
 	end
 
 	stmt = assert(self.db:prepare([[
-        SELECT e.direction, e.destination_id, e.boundary, d.map_id AS destination_map_id,
+        SELECT e.direction, e.destination_id, e.guessed, e.boundary, d.map_id AS destination_map_id,
                m.name AS destination_map_name
         FROM exits e
         LEFT JOIN rooms d ON d.id = e.destination_id
@@ -793,6 +975,7 @@ function Memory:get_room(id)
 		table.insert(room.exits, {
 			direction = row.direction,
 			to = row.destination_id,
+			guessed = row.guessed == 1,
 			boundary = row.boundary,
 			map_id = row.destination_map_id,
 			map_name = row.destination_map_name,
